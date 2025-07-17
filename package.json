@@ -1,0 +1,24 @@
+{
+  "name": "autojest",
+  "version": "1.0.0",
+  "main": "index.js",
+  "bin": {
+    "autojest": "index.js"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "angga2oioi",
+  "license": "ISC",
+  "description": "",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/angga2oioi/autojest.git"
+  },
+  "dependencies": {
+    "fast-glob": "^3.3.3",
+    "ignore": "^7.0.3",
+    "jaci": "^0.0.4",
+    "openai": "^4.86.1"
+  }
+}
