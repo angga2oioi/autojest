@@ -17,28 +17,24 @@ const start = async () => {
 
         const list = await getUntestedFiles(directory);
 
-        if (list.length < 1) {
-            console.info("🎉 All files already have tests.");
-            process.exit(0);
+        if (list.length > 0) {
+            const client = new OpenAI(connection);
+
+            for (const relativePath of list) {
+                const fullPath = path.join(directory, relativePath);
+
+                await generateAndFixTest(fullPath, {
+                    client,
+                    model,
+                    maxRetries,
+                    runTest,
+                });
+            }
+
+            console.info("✅ Done.");
         }
 
-        const client = new OpenAI(connection);
-
-        for (const relativePath of list) {
-            const fullPath = path.join(directory, relativePath);
-
-            const confirm = await jaci.confirm(`Generate test for ${relativePath}?`);
-            if (!confirm) continue;
-
-            await generateAndFixTest(fullPath, {
-                client,
-                model,
-                maxRetries,
-                runTest,
-            });
-        }
-
-        console.info("✅ Done.");
+        console.info("🎉 All files already have tests.");
         process.exit(0);
     } catch (e) {
         console.error(e)
