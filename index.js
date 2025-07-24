@@ -15,10 +15,11 @@ const start = async () => {
         const { connection, model } = await getConfig();
 
         const untestedFiles = await getUntestedFiles(directory);
-        await createTestFile(connection, untestedFiles, directory, model, testDir)
-
+        
+        await createTestFile(connection, untestedFiles, model, testDir)
+        
         const sourceFiles = await getAllSourceFiles(directory)
-        await rerunAllTest(sourceFiles, directory, testDir, connection, model)
+        await rerunAllTest(sourceFiles,  testDir, connection, model)
 
         await runCoverage(directory, testDir, sourceFiles, connection, model)
 

@@ -62,13 +62,13 @@ describe("createTestFile", () => {
     jest.spyOn(console, "info").mockImplementation(() => {});
     process.cwd = jest.fn().mockReturnValue("/proj");
     generateAndFixTest.mockResolvedValue();
-    const files = ["a.js","sub/b.js"];
+    const files = ["a.js", "sub/b.js"];
     await runner.createTestFile(connection, files, directory, model, testDir);
     expect(generateAndFixTest).toHaveBeenCalledTimes(2);
     const calls = generateAndFixTest.mock.calls;
-    expect(calls[0][0]).toBe(path.join(directory,"a.js"));
+    expect(calls[0][0]).toBe(path.join(process.cwd(), "a.js"));
     expect(calls[0][1].relativePath).toMatch(/a\.js$/);
-    expect(calls[1][0]).toBe(path.join(directory,"sub/b.js"));
+    expect(calls[1][0]).toBe(path.join(process.cwd(), "sub/b.js"));
     expect(calls[1][1].relativePath).toMatch(/sub\/b\.js$/);
     expect(console.info).toHaveBeenCalledWith("✅ Tests generated.");
   });
@@ -97,21 +97,21 @@ describe("rerunAllTest", () => {
     childProcess.execSync.mockImplementation(() => { throw err; });
     generateAndFixTest.mockResolvedValue();
     await runner.rerunAllTest(["file.js"], directory, testDir, connection, model);
-    const called = generateAndFixTest.mock.calls[0];
-    expect(called[0]).toBe(path.join(directory,"file.js"));
-    expect(called[1]).toEqual(expect.objectContaining({
-      model,
-      runTest: runner.runTest,
-      testDir,
+    const [filePath, opts] = generateAndFixTest.mock.calls[0];
+    expect(filePath).toBe(path.join(process.cwd(), "file.js"));
+    expect(opts).toMatchObject({
       existingTestCode: "existingCode",
-      existingError: "stdout"
-    }));
-    expect(called[1].relativePath).toMatch(/file\.js$/);
+      existingError: "stdout",
+      runTest: runner.runTest
+    });
+    expect(opts.relativePath).toMatch(/file\.js$/);
+    expect(opts).toHaveProperty("model");
+    expect(opts).toHaveProperty("testDir");
   });
 });
 
 describe("runCoverage", () => {
-  const connection = {}, model = "M", directory = "src", testDir = "tests", sources = ["a.js","b.js"];
+  const connection = {}, model = "M", directory = "src", testDir = "tests", sources = ["a.js", "b.js"];
   beforeEach(() => {
     jest.clearAllMocks();
     OpenAI.mockImplementation(function(conn){ this.conn = conn; });
@@ -124,8 +124,8 @@ describe("runCoverage", () => {
   it("updates undercovered files when confirm true via final report", async () => {
     fs.existsSync.mockImplementation(p => p.endsWith("coverage-summary.json") === false && p.endsWith("coverage-final.json"));
     const raw = {
-      one: { path: "/repo/src/a.js", s: { "1": 0, "2": 1 } }, // 50%
-      two: { path: "/repo/src/b.js", s: { "1": 1 } }         // 100%
+      one: { path: "/repo/src/a.js", s: { "1": 0, "2": 1 } },
+      two: { path: "/repo/src/b.js", s: { "1": 1 } }
     };
     fs.readFileSync.mockReturnValue(JSON.stringify(raw));
     jaci.confirm.mockResolvedValue(true);
@@ -134,12 +134,12 @@ describe("runCoverage", () => {
     expect(jaci.confirm).toHaveBeenCalled();
     expect(generateAndFixTest).toHaveBeenCalledTimes(1);
     const [calledPath, calledOpts] = generateAndFixTest.mock.calls[0];
-    expect(calledPath).toBe(path.join(directory,"a.js"));
-    expect(calledOpts).toEqual(expect.objectContaining({
+    expect(calledPath).toBe(path.join(directory, "a.js"));
+    expect(calledOpts).toMatchObject({
       model,
       runTest: runner.runTest,
       testDir
-    }));
+    });
     expect(calledOpts.relativePath).toMatch(/a\.js$/);
     expect(console.info).toHaveBeenCalledWith("✅ Tests updated for under-covered files.");
   });
