@@ -1,122 +1,126 @@
-jest.setTimeout(30000);
+const mockGetDirectoryToTest = jest.fn();
+const mockGetOutputDirectory = jest.fn();
+const mockGetConfig = jest.fn();
+const mockGetUntestedFiles = jest.fn();
+const mockGetAllSourceFiles = jest.fn();
+const mockCreateTestFile = jest.fn();
+const mockRerunAllTest = jest.fn();
 
-jest.mock('jaci', () => ({ string: jest.fn(), confirm: jest.fn() }));
-const jaci = require('jaci');
+jest.mock('../lib/config', () => ({
+  getConfig: mockGetConfig,
+  getDirectoryToTest: mockGetDirectoryToTest,
+  getOutputDirectory: mockGetOutputDirectory,
+}));
 
-jest.mock('../lib/config', () => ({ getConfig: jest.fn() }));
-const { getConfig } = require('../lib/config');
+jest.mock('../lib/scanner', () => ({
+  getUntestedFiles: mockGetUntestedFiles,
+  getAllSourceFiles: mockGetAllSourceFiles,
+}));
 
-jest.mock('../lib/scanner', () => ({ getUntestedFiles: jest.fn() }));
-const { getUntestedFiles } = require('../lib/scanner');
+jest.mock('../lib/runner', () => ({
+  createTestFile: mockCreateTestFile,
+  rerunAllTest: mockRerunAllTest,
+}));
 
-jest.mock('../lib/testgen', () => ({ generateAndFixTest: jest.fn() }));
-const { generateAndFixTest } = require('../lib/testgen');
-
-jest.mock('../lib/runner', () => ({ runTest: jest.fn() }));
-const { runTest } = require('../lib/runner');
-
-jest.mock('openai', () => jest.fn().mockImplementation(() => ({})));
-const OpenAI = require('openai');
-
-jest.mock('child_process', () => ({ execSync: jest.fn() }));
-const { execSync } = require('child_process');
-
-jest.mock('fs', () => ({ existsSync: jest.fn(), readFileSync: jest.fn() }));
-const fs = require('fs');
-
-const path = require('path');
-
-describe('index.js CLI behavior', () => {
-  let exitPromise;
-  let exitResolve;
-
+describe('index.js start function', () => {
   beforeEach(() => {
     jest.resetModules();
     jest.clearAllMocks();
-
-    jaci.string.mockResolvedValue('rel');
-    jaci.confirm.mockResolvedValue(true);
-
-    getConfig.mockResolvedValue({ connection: {}, model: 'm', maxRetries: 1 });
-    getUntestedFiles.mockResolvedValue(['file.js']);
-    generateAndFixTest.mockResolvedValue();
-    runTest.mockResolvedValue({ passed: true });
-    execSync.mockImplementation(() => {});
-
-    fs.existsSync.mockReturnValue(false);
-    fs.readFileSync.mockReturnValue('');
-
-    exitPromise = new Promise(resolve => { exitResolve = resolve; });
-    process.exit = code => exitResolve(code);
-
-    console.info = jest.fn();
-    console.error = jest.fn();
+    jest.spyOn(console, 'info').mockImplementation(() => {});
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    jest.spyOn(process, 'exit').mockImplementation(() => {});
   });
 
-  function loadIndex() {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  test('should create tests and rerun when untested files exist', async () => {
+    mockGetDirectoryToTest.mockResolvedValue('testDir');
+    mockGetOutputDirectory.mockResolvedValue('outDir');
+    mockGetConfig.mockResolvedValue({ connection: 'conn', model: 'mdl' });
+    mockGetUntestedFiles.mockResolvedValue(['file1.js', 'file2.js']);
+    mockCreateTestFile.mockResolvedValue();
+    mockGetAllSourceFiles.mockResolvedValue(['src1.js', 'src2.js']);
+    mockRerunAllTest.mockResolvedValue();
+
     jest.isolateModules(() => { require('../index.js'); });
-    return exitPromise;
-  }
+    await new Promise(r => setImmediate(r));
 
-  test('normal flow: generate tests, summary >80%, exit 0', async () => {
-    const summary = { 'rel/file.js': { statements: { pct: 85 } } };
-    fs.existsSync.mockImplementation(p => p.endsWith('coverage-summary.json'));
-    fs.readFileSync.mockImplementation(() => JSON.stringify(summary));
-
-    const code = await loadIndex();
-    expect(code).toBe(0);
-    expect(jaci.string).toHaveBeenCalledTimes(2);
-    expect(getConfig).toHaveBeenCalled();
-    expect(getUntestedFiles).toHaveBeenCalledWith('rel');
-    expect(generateAndFixTest).toHaveBeenCalledTimes(1);
-    expect(execSync).toHaveBeenCalledWith('npx jest --coverage', { stdio: 'inherit' });
-    expect(jaci.confirm).not.toHaveBeenCalled();
-    expect(console.error).not.toHaveBeenCalledWith('❌ No coverage report found.');
+    expect(mockGetDirectoryToTest).toHaveBeenCalledTimes(1);
+    expect(mockGetOutputDirectory).toHaveBeenCalledTimes(1);
+    expect(mockGetConfig).toHaveBeenCalledTimes(1);
+    expect(mockGetUntestedFiles).toHaveBeenCalledWith('testDir');
+    expect(mockCreateTestFile).toHaveBeenCalledWith('conn', ['file1.js', 'file2.js'], 'testDir', 'mdl', 'outDir');
+    expect(mockGetAllSourceFiles).toHaveBeenCalledWith('testDir');
+    expect(mockRerunAllTest).toHaveBeenCalledWith(['src1.js', 'src2.js'], 'testDir', 'outDir', 'conn', 'mdl');
+    expect(console.info).not.toHaveBeenCalled();
+    expect(process.exit).not.toHaveBeenCalled();
   });
 
-  test('no coverage report logs error and exits 0', async () => {
-    fs.existsSync.mockReturnValue(false);
+  test('should still run createTestFile and rerun when no untested files', async () => {
+    mockGetDirectoryToTest.mockResolvedValue('D');
+    mockGetOutputDirectory.mockResolvedValue('O');
+    mockGetConfig.mockResolvedValue({ connection: 'C', model: 'M' });
+    mockGetUntestedFiles.mockResolvedValue([]);
+    const allFiles = ['s1.js', 's2.js'];
+    mockGetAllSourceFiles.mockResolvedValue(allFiles);
+    mockRerunAllTest.mockResolvedValue();
 
-    const code = await loadIndex();
-    expect(code).toBe(0);
-    expect(console.error).toHaveBeenCalledWith('❌ No coverage report found.');
-    expect(generateAndFixTest).toHaveBeenCalledTimes(1);
+    jest.isolateModules(() => { require('../index.js'); });
+    await new Promise(r => setImmediate(r));
+
+    expect(mockCreateTestFile).toHaveBeenCalledWith('C', [], 'D', 'M', 'O');
+    expect(mockGetAllSourceFiles).toHaveBeenCalledWith('D');
+    expect(mockRerunAllTest).toHaveBeenCalledWith(allFiles, 'D', 'O', 'C', 'M');
+    expect(console.info).not.toHaveBeenCalled();
+    expect(process.exit).not.toHaveBeenCalled();
   });
 
-  test('coverage failure, test fix loop, final and undercovered update', async () => {
-    execSync.mockImplementationOnce(() => { throw new Error('fail'); }).mockImplementation(() => {});
-    const projectRoot = process.cwd();
-    const absPath = path.join(projectRoot, 'rel', 'file.js');
-    const raw = { e: { path: absPath, s: { '1': 0, '2': 1 } } };
+  test('error path: should catch and log error from getConfig without exiting', async () => {
+    const err = new Error('boom');
+    mockGetDirectoryToTest.mockResolvedValue('testDir');
+    mockGetOutputDirectory.mockResolvedValue('outDir');
+    mockGetConfig.mockRejectedValue(err);
 
-    fs.existsSync.mockImplementation(p => p.endsWith('coverage-final.json'));
-    fs.readFileSync.mockImplementation(() => JSON.stringify(raw));
+    jest.isolateModules(() => { require('../index.js'); });
+    await new Promise(r => setImmediate(r));
 
-    jaci.string
-      .mockResolvedValueOnce('rel')
-      .mockResolvedValueOnce('testdir');
-    runTest.mockResolvedValueOnce({ passed: false });
-    jaci.confirm.mockResolvedValue(true);
-
-    const code = await loadIndex();
-    expect(code).toBe(0);
-    expect(generateAndFixTest).toHaveBeenCalledTimes(3);
-    expect(execSync).toHaveBeenCalledTimes(2);
-    expect(jaci.confirm).toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith(err);
+    expect(process.exit).not.toHaveBeenCalled();
   });
 
-  test('rejects absolute then accepts relative paths', async () => {
-    jaci.string
-      .mockResolvedValueOnce('/abs')
-      .mockResolvedValueOnce('relDir')
-      .mockResolvedValueOnce('/abs2')
-      .mockResolvedValueOnce('testDir');
-    fs.existsSync.mockReturnValue(false);
+  test('error in createTestFile: should catch and log error without exiting', async () => {
+    const err = new Error('create error');
+    mockGetDirectoryToTest.mockResolvedValue('D');
+    mockGetOutputDirectory.mockResolvedValue('O');
+    mockGetConfig.mockResolvedValue({ connection: 'C', model: 'M' });
+    mockGetUntestedFiles.mockResolvedValue(['u.js']);
+    mockCreateTestFile.mockRejectedValue(err);
 
-    const code = await loadIndex();
-    expect(code).toBe(0);
-    expect(jaci.string).toHaveBeenCalledTimes(4);
-    expect(console.error).toHaveBeenCalledWith('❌ Absolute paths are not allowed. Please enter a relative path.');
-    expect(console.error).toHaveBeenCalledWith('❌ Absolute paths are not allowed. Please enter a relative path for test directory.');
+    jest.isolateModules(() => { require('../index.js'); });
+    await new Promise(r => setImmediate(r));
+
+    expect(mockCreateTestFile).toHaveBeenCalledWith('C', ['u.js'], 'D', 'M', 'O');
+    expect(console.error).toHaveBeenCalledWith(err);
+    expect(process.exit).not.toHaveBeenCalled();
+  });
+
+  test('error in rerunAllTest: should catch and log error without exiting', async () => {
+    const err = new Error('rerun error');
+    mockGetDirectoryToTest.mockResolvedValue('D');
+    mockGetOutputDirectory.mockResolvedValue('O');
+    mockGetConfig.mockResolvedValue({ connection: 'C', model: 'M' });
+    mockGetUntestedFiles.mockResolvedValue(['u.js']);
+    mockCreateTestFile.mockResolvedValue();
+    mockGetAllSourceFiles.mockResolvedValue(['s1.js']);
+    mockRerunAllTest.mockRejectedValue(err);
+
+    jest.isolateModules(() => { require('../index.js'); });
+    await new Promise(r => setImmediate(r));
+
+    expect(mockRerunAllTest).toHaveBeenCalledWith(['s1.js'], 'D', 'O', 'C', 'M');
+    expect(console.error).toHaveBeenCalledWith(err);
+    expect(process.exit).not.toHaveBeenCalled();
   });
 });

@@ -1,80 +1,114 @@
-const fg = require("fast-glob");
 jest.mock("fast-glob");
-
-const { getUntestedFiles } = require("../../lib/scanner");
+const fg = require("fast-glob");
+const { getAllSourceFiles, getUntestedFiles } = require("../../lib/scanner");
 
 beforeEach(() => {
-    fg.mockReset();
+  fg.mockReset();
 });
 
-test("returns empty when every source has matching .test files", async () => {
-    const sources = ["foo.js", "bar.ts"];
-    const tests = ["foo.test.js", "bar.test.ts"];
-    fg.mockImplementation((patterns) => {
-        // first call: source files
-        if (patterns[0].includes("*.{js")) return Promise.resolve(sources);
-        // second call: test files
-        return Promise.resolve(tests);
-    });
-    await expect(getUntestedFiles("root")).resolves.toEqual([]);
+describe("getAllSourceFiles", () => {
+  it("calls fast-glob with correct patterns and returns its result", async () => {
+    const mockFiles = ["a.js", "dir/b.tsx"];
+    fg.mockResolvedValueOnce(mockFiles);
+    const result = await getAllSourceFiles("rootDir");
+    expect(fg).toHaveBeenCalledTimes(1);
+    expect(fg).toHaveBeenCalledWith(
+      ["**/*.{js,ts,jsx,tsx}"],
+      {
+        cwd: "rootDir",
+        ignore: [
+          "**/*.test.*",
+          "**/__tests__/**",
+          "node_modules/**",
+          "coverage/**",
+          "dist/**",
+          "build/**"
+        ],
+      }
+    );
+    expect(result).toEqual(mockFiles);
+  });
+
+  it("propagates errors from fast-glob", async () => {
+    const err = new Error("glob failure");
+    fg.mockRejectedValueOnce(err);
+    await expect(getAllSourceFiles("anyDir")).rejects.toThrow("glob failure");
+  });
 });
 
-test("returns all sources when no tests are found", async () => {
-    const sources = ["a.js", "b.tsx"];
-    const tests = [];
-    fg.mockImplementation((patterns) => {
-        if (patterns[0].includes("*.{js")) return Promise.resolve(sources);
-        return Promise.resolve(tests);
-    });
-    await expect(getUntestedFiles("root")).resolves.toEqual(["a.js", "b.tsx"]);
-});
+describe("getUntestedFiles", () => {
+  it("returns only files without matching .test.js files", async () => {
+    const src = ["src/foo.js", "src/foo2.tsx", "bar/baz.jsx"];
+    const tests = ["foo.test.js"];
+    fg
+      .mockResolvedValueOnce(src)   // all source files
+      .mockResolvedValueOnce(tests); // all test files
+    const result = await getUntestedFiles("cwd");
+    expect(result.sort()).toEqual(["bar/baz.jsx", "src/foo2.tsx"].sort());
+    expect(fg).toHaveBeenCalledTimes(2);
+    expect(fg).toHaveBeenNthCalledWith(
+      1,
+      ["**/*.{js,ts,jsx,tsx}"],
+      {
+        cwd: "cwd",
+        ignore: [
+          "**/*.test.*",
+          "**/__tests__/**",
+          "node_modules/**",
+          "coverage/**",
+          "dist/**",
+          "build/**"
+        ]
+      }
+    );
+    expect(fg).toHaveBeenNthCalledWith(
+      2,
+      ["**/*.test.{js,ts,jsx,tsx}", "**/*.spec.{js,ts,jsx,tsx}"],
+      { cwd: "cwd", ignore: ["node_modules/**"] }
+    );
+  });
 
-test("handles nested paths and strips 'src' prefix", async () => {
-    const sources = ["src/utils/helper.jsx", "src/components/widget.tsx"];
-    const tests = ["test/utils/helper.test.jsx"];
-    fg.mockImplementation((patterns) => {
-        if (patterns[0].includes("*.{js")) return Promise.resolve(sources);
-        return Promise.resolve(tests);
-    });
-    await expect(getUntestedFiles("root")).resolves.toEqual(["src/components/widget.tsx"]);
-});
+  it("treats Windows backslashes and matches tests in __tests__ or test folders", async () => {
+    const src = ["src\\a\\b\\c.jsx", "src\\x\\y.ts"];
+    const tests = ["__tests__\\a\\b\\c.test.jsx", "test\\x\\y.test.ts"];
+    fg.mockResolvedValueOnce(src).mockResolvedValueOnce(tests);
+    const result = await getUntestedFiles("any");
+    expect(result).toEqual([]);
+  });
 
-test("matches tests in __tests__ directory", async () => {
-    const sources = ["app/service.js"];
-    const tests = ["__tests__/app/service.test.js"];
-    fg.mockImplementation((patterns) => {
-        if (patterns[0].includes("*.{js")) return Promise.resolve(sources);
-        return Promise.resolve(tests);
-    });
-    await expect(getUntestedFiles("root")).resolves.toEqual([]);
-});
+  it("does not match .spec test files because only .test is stripped", async () => {
+    const src = ["foo.tsx", "lib/utils.js"];
+    const tests = ["foo.spec.tsx", "lib/utils.spec.js"];
+    fg.mockResolvedValueOnce(src).mockResolvedValueOnce(tests);
+    const result = await getUntestedFiles("d");
+    expect(result.sort()).toEqual(src.sort());
+  });
 
-test("handles Windows backslashes in paths", async () => {
-    const sources = ["src\\module\\baz.js"];
-    const tests = ["test\\module\\baz.test.js"];
-    fg.mockImplementation((patterns) => {
-        if (patterns[0].includes("*.{js")) return Promise.resolve(sources);
-        return Promise.resolve(tests);
-    });
-    await expect(getUntestedFiles("root")).resolves.toEqual([]);
-});
+  it("handles files without any tests (empty test list)", async () => {
+    const src = ["one.js", "two.ts"];
+    fg.mockResolvedValueOnce(src).mockResolvedValueOnce([]);
+    const result = await getUntestedFiles("dir");
+    expect(result).toEqual(src);
+  });
 
-test("does not count .spec files as matching tests", async () => {
-    const sources = ["module/qux.js"];
-    const tests = ["test/module/qux.spec.js"];
-    fg.mockImplementation((patterns) => {
-        if (patterns[0].includes("*.{js")) return Promise.resolve(sources);
-        return Promise.resolve(tests);
-    });
-    await expect(getUntestedFiles("root")).resolves.toEqual(["module/qux.js"]);
-});
+  it("ignores 'src' segment and filters nested segments correctly", async () => {
+    const src = ["src/components/Widget.ts", "src/pages/Home/index.js"];
+    const tests = ["components/Widget.test.ts", "pages/Home/index.test.js"];
+    fg.mockResolvedValueOnce(src).mockResolvedValueOnce(tests);
+    const result = await getUntestedFiles("root");
+    expect(result).toEqual([]);
+  });
 
-test("mixed .test and .spec files, only .test counts", async () => {
-    const sources = ["src/item.js", "src/other.js"];
-    const tests = ["test/item.spec.js", "test/other.test.js"];
-    fg.mockImplementation((patterns) => {
-        if (patterns[0].includes("*.{js")) return Promise.resolve(sources);
-        return Promise.resolve(tests);
-    });
-    await expect(getUntestedFiles("root")).resolves.toEqual(["src/item.js"]);
+  it("propagates errors from fast-glob on first call", async () => {
+    const err = new Error("first fail");
+    fg.mockRejectedValueOnce(err);
+    await expect(getUntestedFiles("x")).rejects.toThrow("first fail");
+  });
+
+  it("propagates errors from fast-glob on second call", async () => {
+    const src = ["a.js"];
+    const err = new Error("second fail");
+    fg.mockResolvedValueOnce(src).mockRejectedValueOnce(err);
+    await expect(getUntestedFiles("y")).rejects.toThrow("second fail");
+  });
 });

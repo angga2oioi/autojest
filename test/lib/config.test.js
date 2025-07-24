@@ -1,153 +1,173 @@
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const jaci = require('jaci');
-const { getConfig } = require('../../lib/config');
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+const jaci = require("jaci");
+const { getConfig, getDirectoryToTest, getOutputDirectory } = require("../../lib/config");
 
-const originalPlatform = process.platform;
+jest.mock("fs", () => ({
+  existsSync: jest.fn(),
+  mkdirSync: jest.fn(),
+  readFileSync: jest.fn(),
+  writeFileSync: jest.fn()
+}));
+jest.mock("os", () => ({
+  homedir: jest.fn()
+}));
+jest.mock("jaci", () => ({
+  confirm: jest.fn(),
+  string: jest.fn(),
+  number: jest.fn()
+}));
 
-function setPlatform(value) {
-  Object.defineProperty(process, 'platform', {
-    value,
-    writable: true
-  });
-}
-
-describe('getConfig', () => {
+describe("getConfig", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     delete process.env.APPDATA;
-    fs.existsSync = jest.fn();
-    fs.mkdirSync = jest.fn();
-    fs.readFileSync = jest.fn();
-    fs.writeFileSync = jest.fn();
-    jaci.confirm = jest.fn();
-    jaci.string = jest.fn();
-    jaci.number = jest.fn();
   });
+  function setPlatform(platform) {
+    Object.defineProperty(process, "platform", { value: platform });
+  }
 
-  afterAll(() => {
-    Object.defineProperty(process, 'platform', { value: originalPlatform });
-  });
-
-  test('linux platform, dir missing and config missing, prompts and writes', async () => {
-    setPlatform('linux');
-    const home = '/home/user';
-    jest.spyOn(os, 'homedir').mockReturnValue(home);
-    const dir = path.join(home, '.config', 'autojest');
-    const configPath = path.join(dir, 'config.json');
-    fs.existsSync.mockReturnValue(false);
-    const connStr = '{"host":"localhost"}';
-    const model = 'GPT';
-    const maxRetries = 3;
-    jaci.string.mockImplementation((prompt) => {
-      if (prompt.includes('Open AI Connection')) return Promise.resolve(connStr);
-      if (prompt.includes('AI Model')) return Promise.resolve(model);
-      return Promise.resolve('');
-    });
-    jaci.number.mockResolvedValue(maxRetries);
-    const result = await getConfig();
-    expect(fs.existsSync).toHaveBeenCalledWith(dir);
-    expect(fs.mkdirSync).toHaveBeenCalledWith(dir, { recursive: true });
-    expect(jaci.confirm).not.toHaveBeenCalled();
-    expect(jaci.string).toHaveBeenCalledTimes(2);
-    expect(jaci.number).toHaveBeenCalledWith(expect.stringContaining('Max Retries'), { required: true });
-    expect(fs.writeFileSync).toHaveBeenCalledWith(
-      configPath,
-      JSON.stringify({ connection: JSON.parse(connStr), model, maxRetries }, null, 2)
-    );
-    expect(result).toEqual({ connection: JSON.parse(connStr), model, maxRetries });
-  });
-
-  test('linux platform, dir exists and config exists, confirm yes reads file', async () => {
-    setPlatform('linux');
-    const home = '/home/user';
-    jest.spyOn(os, 'homedir').mockReturnValue(home);
-    const dir = path.join(home, '.config', 'autojest');
-    const configPath = path.join(dir, 'config.json');
+  test("uses saved config if exists and user confirms", async () => {
+    setPlatform("linux");
+    os.homedir.mockReturnValue("/home/user");
+    const dir = path.join("/home/user", ".config", "autojest");
+    const configPath = path.join(dir, "config.json");
     fs.existsSync.mockImplementation(p => p === dir || p === configPath);
-    const fileContent = '{"existing":"config"}';
-    fs.readFileSync.mockReturnValue(fileContent);
     jaci.confirm.mockResolvedValue(true);
+    const saved = { connection: { foo: "bar" }, model: "M", maxRetries: 2 };
+    fs.readFileSync.mockReturnValue(JSON.stringify(saved));
     const result = await getConfig();
-    expect(fs.existsSync).toHaveBeenCalledWith(dir);
-    expect(fs.mkdirSync).not.toHaveBeenCalled();
-    expect(jaci.confirm).toHaveBeenCalledWith(
-      'Use saved config? (Y/N)',
-      { default: true, confirm: { true: 'Y', false: 'N' } }
-    );
-    expect(fs.readFileSync).toHaveBeenCalledWith(configPath, 'utf-8');
-    expect(result).toEqual(JSON.parse(fileContent));
+    expect(result).toEqual(saved);
+    expect(fs.readFileSync).toHaveBeenCalledWith(configPath, "utf-8");
+    expect(fs.writeFileSync).not.toHaveBeenCalled();
   });
 
-  test('linux platform, dir exists and config exists, confirm no then prompts and writes', async () => {
-    setPlatform('linux');
-    const home = '/home/user';
-    jest.spyOn(os, 'homedir').mockReturnValue(home);
-    const dir = path.join(home, '.config', 'autojest');
-    const configPath = path.join(dir, 'config.json');
+  test("prompts and rewrites config if user declines saved", async () => {
+    setPlatform("linux");
+    os.homedir.mockReturnValue("/home/user");
+    const dir = path.join("/home/user", ".config", "autojest");
+    const configPath = path.join(dir, "config.json");
     fs.existsSync.mockImplementation(p => p === dir || p === configPath);
     jaci.confirm.mockResolvedValue(false);
-    const connStr = '{"url":"api"}';
-    const model = 'MODELX';
-    const maxRetries = 5;
-    jaci.string.mockImplementation((prompt) => {
-      if (prompt.includes('Connection')) return Promise.resolve(connStr);
-      if (prompt.includes('Model')) return Promise.resolve(model);
-      return Promise.resolve('');
-    });
-    jaci.number.mockResolvedValue(maxRetries);
+    jaci.string
+      .mockResolvedValueOnce('{"x":1}')
+      .mockResolvedValueOnce("ModelY");
+    jaci.number.mockResolvedValue(7);
     const result = await getConfig();
-    expect(jaci.confirm).toHaveBeenCalled();
-    expect(jaci.string).toHaveBeenCalledTimes(2);
     expect(fs.writeFileSync).toHaveBeenCalledWith(
       configPath,
-      JSON.stringify({ connection: JSON.parse(connStr), model, maxRetries }, null, 2)
+      JSON.stringify({ connection: { x: 1 }, model: "ModelY", maxRetries: 7 }, null, 2)
     );
-    expect(result).toEqual({ connection: JSON.parse(connStr), model, maxRetries });
+    expect(result).toEqual({ connection: { x: 1 }, model: "ModelY", maxRetries: 7 });
   });
 
-  test('windows platform with APPDATA defined, dir missing and prompts', async () => {
-    setPlatform('win32');
-    process.env.APPDATA = '/appdata';
-    jest.spyOn(os, 'homedir').mockReturnValue('/home/fallback');
-    const dir = path.join(process.env.APPDATA, 'autojest');
-    const configPath = path.join(dir, 'config.json');
+  test("creates directory and new config when none exists on linux", async () => {
+    setPlatform("linux");
+    os.homedir.mockReturnValue("/home/user");
+    const dir = path.join("/home/user", ".config", "autojest");
+    const configPath = path.join(dir, "config.json");
     fs.existsSync.mockReturnValue(false);
-    const connStr = '{"x":1}';
-    const model = 'WIN_MODEL';
-    const maxRetries = 2;
-    jaci.string.mockImplementation((prompt) => {
-      if (prompt.includes('Connection')) return Promise.resolve(connStr);
-      if (prompt.includes('Model')) return Promise.resolve(model);
-      return Promise.resolve('');
-    });
-    jaci.number.mockResolvedValue(maxRetries);
+    jaci.string
+      .mockResolvedValueOnce('{"y":2}')
+      .mockResolvedValueOnce("ModelZ");
+    jaci.number.mockResolvedValue(9);
     const result = await getConfig();
-    expect(fs.existsSync).toHaveBeenCalledWith(dir);
     expect(fs.mkdirSync).toHaveBeenCalledWith(dir, { recursive: true });
-    expect(result).toEqual({ connection: JSON.parse(connStr), model, maxRetries });
+    expect(fs.writeFileSync).toHaveBeenCalledWith(
+      configPath,
+      JSON.stringify({ connection: { y: 2 }, model: "ModelZ", maxRetries: 9 }, null, 2)
+    );
+    expect(result).toEqual({ connection: { y: 2 }, model: "ModelZ", maxRetries: 9 });
   });
 
-  test('windows platform with APPDATA undefined, uses homedir', async () => {
-    setPlatform('win32');
-    delete process.env.APPDATA;
-    const home = '/home/user2';
-    jest.spyOn(os, 'homedir').mockReturnValue(home);
-    const dir = path.join(home, 'autojest');
-    const configPath = path.join(dir, 'config.json');
+  test("creates directory and new config when none exists on Windows using APPDATA", async () => {
+    setPlatform("win32");
+    process.env.APPDATA = "C:\\AppData";
+    os.homedir.mockReturnValue("C:\\home");
+    const dir = path.join("C:\\AppData", "autojest");
+    const configPath = path.join(dir, "config.json");
     fs.existsSync.mockReturnValue(false);
-    const connStr = '{"y":2}';
-    const model = 'NO_APPDATA';
-    const maxRetries = 4;
-    jaci.string.mockImplementation((prompt) => {
-      if (prompt.includes('Connection')) return Promise.resolve(connStr);
-      if (prompt.includes('Model')) return Promise.resolve(model);
-      return Promise.resolve('');
-    });
-    jaci.number.mockResolvedValue(maxRetries);
+    jaci.string
+      .mockResolvedValueOnce('{"z":3}')
+      .mockResolvedValueOnce("ModelW");
+    jaci.number.mockResolvedValue(11);
     const result = await getConfig();
     expect(fs.mkdirSync).toHaveBeenCalledWith(dir, { recursive: true });
-    expect(result).toEqual({ connection: JSON.parse(connStr), model, maxRetries });
+    expect(fs.writeFileSync).toHaveBeenCalledWith(
+      configPath,
+      JSON.stringify({ connection: { z: 3 }, model: "ModelW", maxRetries: 11 }, null, 2)
+    );
+    expect(result).toEqual({ connection: { z: 3 }, model: "ModelW", maxRetries: 11 });
+  });
+
+  test("Windows without APPDATA falls back to homedir", async () => {
+    setPlatform("win32");
+    os.homedir.mockReturnValue("D:\\UserHome");
+    const dir = path.join("D:\\UserHome", "autojest");
+    const configPath = path.join(dir, "config.json");
+    fs.existsSync.mockReturnValue(false);
+    jaci.string
+      .mockResolvedValueOnce('{"k":5}')
+      .mockResolvedValueOnce("ModelX");
+    jaci.number.mockResolvedValue(4);
+    const result = await getConfig();
+    expect(fs.mkdirSync).toHaveBeenCalledWith(dir, { recursive: true });
+    expect(fs.writeFileSync).toHaveBeenCalledWith(
+      configPath,
+      JSON.stringify({ connection: { k: 5 }, model: "ModelX", maxRetries: 4 }, null, 2)
+    );
+    expect(result).toEqual({ connection: { k: 5 }, model: "ModelX", maxRetries: 4 });
+  });
+
+  test("throws error on invalid saved JSON", async () => {
+    setPlatform("linux");
+    os.homedir.mockReturnValue("/home/user");
+    const dir = path.join("/home/user", ".config", "autojest");
+    const configPath = path.join(dir, "config.json");
+    fs.existsSync.mockImplementation(p => p === dir || p === configPath);
+    jaci.confirm.mockResolvedValue(true);
+    fs.readFileSync.mockReturnValue("not-json");
+    await expect(getConfig()).rejects.toThrow(SyntaxError);
+  });
+});
+
+describe("getDirectoryToTest", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  test("re-prompts on absolute then returns relative", async () => {
+    jaci.string
+      .mockResolvedValueOnce("/abs/path")
+      .mockResolvedValueOnce("rel/path");
+    const result = await getDirectoryToTest();
+    expect(jaci.string).toHaveBeenCalledTimes(2);
+    expect(result).toBe("rel/path");
+  });
+
+  test("returns immediately on relative path", async () => {
+    jaci.string.mockResolvedValueOnce("mydir");
+    const result = await getDirectoryToTest();
+    expect(jaci.string).toHaveBeenCalledTimes(1);
+    expect(result).toBe("mydir");
+  });
+});
+
+describe("getOutputDirectory", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  test("re-prompts on absolute then returns relative", async () => {
+    jaci.string
+      .mockResolvedValueOnce("/abs/testdir")
+      .mockResolvedValueOnce("out/tests");
+    const result = await getOutputDirectory();
+    expect(jaci.string).toHaveBeenCalledTimes(2);
+    expect(result).toBe("out/tests");
+  });
+
+  test("returns immediately on relative path", async () => {
+    jaci.string.mockResolvedValueOnce("tests/out");
+    const result = await getOutputDirectory();
+    expect(jaci.string).toHaveBeenCalledTimes(1);
+    expect(result).toBe("tests/out");
   });
 });

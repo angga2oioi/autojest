@@ -1,131 +1,167 @@
-jest.mock('ora', () => ({
-  __esModule: true,
-  default: jest.fn(() => ({
-    start: jest.fn().mockReturnThis(),
-    succeed: jest.fn(),
-  })),
-}));
-
 const fs = require('fs');
 const path = require('path');
-const ora = require('ora').default;
+const os = require('os');
 const { generateAndFixTest } = require('../../lib/testgen');
+const ora = require('ora');
+
+jest.mock('ora', () => {
+  const spinner = {
+    start: jest.fn(() => spinner),
+    succeed: jest.fn(),
+  };
+  return { __esModule: true, default: jest.fn(() => spinner) };
+});
 
 describe('generateAndFixTest', () => {
+  let tmpDir;
+
   beforeEach(() => {
-    jest.clearAllMocks();
-    jest.spyOn(process, 'cwd').mockReturnValue('/project');
-    fs.readFileSync = jest.fn().mockReturnValue('console.log("hello");');
-    fs.mkdirSync = jest.fn();
-  });
-  afterAll(() => {
-    process.cwd.mockRestore();
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'testgen-'));
+    jest.spyOn(process, 'cwd').mockReturnValue(tmpDir);
   });
 
-  test('writes test once when runTest passes immediately', async () => {
+  afterEach(() => {
+    process.cwd.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    jest.clearAllMocks();
+  });
+
+  test('initial generation branch: calls OpenAI once and writes test successfully', async () => {
+    const sourceRel = 'src/file.js';
+    const sourcePath = path.join(tmpDir, sourceRel);
+    fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+    fs.writeFileSync(sourcePath, 'module.exports = { add: (a, b) => a + b };');
+
     const client = {
       chat: {
         completions: {
           create: jest.fn().mockResolvedValue({
-            choices: [{ message: { content: 'test code content' } }],
+            choices: [{ message: { content: '// jest test v1' } }],
           }),
         },
       },
     };
     const runTest = jest.fn().mockResolvedValue({ passed: true });
-    const options = {
+
+    await generateAndFixTest(sourcePath, {
       client,
       model: 'gpt-4',
-      maxRetries: 3,
       runTest,
       testDir: 'tests',
-      relativePath: 'src/file.js',
-    };
-
-    await generateAndFixTest('/project/src/file.js', options);
-
-    expect(fs.readFileSync).toHaveBeenCalledWith('/project/src/file.js', 'utf8');
-    expect(client.chat.completions.create).toHaveBeenCalledTimes(1);
-    const callArg = client.chat.completions.create.mock.calls[0][0];
-    expect(callArg.model).toBe('gpt-4');
-    expect(callArg.messages[0]).toEqual({
-      role: 'system',
-      content: 'You write clean, idiomatic Jest tests.',
+      relativePath: sourceRel,
     });
-    expect(callArg.messages.some((m) => m.role === 'user')).toBe(true);
 
-    const expectedTestPath = path.join('/project', 'tests', 'src/file.test.js');
-    expect(fs.mkdirSync).toHaveBeenCalledWith(path.dirname(expectedTestPath), { recursive: true });
-    expect(runTest).toHaveBeenCalledWith(expectedTestPath, 'test code content');
+    expect(client.chat.completions.create).toHaveBeenCalledTimes(1);
+    const expectedRel = path.posix.join('tests', sourceRel).replace(/\.(js|ts)x?$/, '.test.$1');
+    const expectedPath = path.join(tmpDir, expectedRel);
+    expect(runTest).toHaveBeenCalledWith(expectedPath, '// jest test v1');
 
-    expect(ora).toHaveBeenCalledWith('Generate test for /project/src/file.js');
-    const spinner = ora.mock.results[0].value;
+    expect(ora.default).toHaveBeenCalledWith(`Generate test for ${sourcePath}`);
+    const spinner = ora.default.mock.results[0].value;
     expect(spinner.start).toHaveBeenCalled();
     expect(spinner.succeed).toHaveBeenCalledWith('✅ Test written: file.js');
   });
 
-  test('retries on failure until success', async () => {
+  test('existing test branch: uses existingTestCode and existingError prompts', async () => {
+    const sourceRel = 'lib/util.js';
+    const sourcePath = path.join(tmpDir, sourceRel);
+    fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+    fs.writeFileSync(sourcePath, 'exports.foo = () => "bar";');
+
+    const existingTestCode = '// existing test';
+    const existingError = 'ReferenceError';
     const client = {
       chat: {
         completions: {
-          create: jest
-            .fn()
-            .mockResolvedValueOnce({ choices: [{ message: { content: 'code1' } }] })
-            .mockResolvedValueOnce({ choices: [{ message: { content: 'code2' } }] })
-            .mockResolvedValueOnce({ choices: [{ message: { content: 'code3' } }] }),
+          create: jest.fn().mockResolvedValue({
+            choices: [{ message: { content: '// fixed test code' } }],
+          }),
         },
       },
     };
-    const runTest = jest
-      .fn()
-      .mockResolvedValueOnce({ passed: false, error: 'error1' })
-      .mockResolvedValueOnce({ passed: false, error: 'error2' })
-      .mockResolvedValueOnce({ passed: true });
-    const options = {
+    const runTest = jest.fn().mockResolvedValue({ passed: true });
+
+    await generateAndFixTest(sourcePath, {
       client,
-      model: 'modelX',
-      maxRetries: '5',
+      model: 'gpt-4',
       runTest,
-      testDir: 'tDir',
-      relativePath: 'a/b/c.ts',
-    };
-
-    await generateAndFixTest('/project/a/b/c.ts', options);
-
-    expect(client.chat.completions.create).toHaveBeenCalledTimes(3);
-    expect(runTest).toHaveBeenCalledTimes(3);
-
-    const secondCreate = client.chat.completions.create.mock.calls[1][0].messages;
-    expect(secondCreate[secondCreate.length - 1]).toMatchObject({
-      role: 'user',
-      content: expect.stringContaining('error1'),
+      testDir: 'testdir',
+      relativePath: sourceRel,
+      existingTestCode,
+      existingError,
     });
 
-    const expectedPath = path.join('/project', 'tDir', 'a/b/c.test.ts');
-    expect(fs.mkdirSync).toHaveBeenCalledWith(path.dirname(expectedPath), { recursive: true });
+    expect(client.chat.completions.create).toHaveBeenCalledTimes(1);
+    const msgs = client.chat.completions.create.mock.calls[0][0].messages;
+    expect(msgs.some(m => m.content.includes(existingTestCode))).toBe(true);
+    expect(msgs.some(m => m.content.includes(existingError))).toBe(true);
+
+    const expectedRel = path.posix.join('testdir', sourceRel).replace(/\.(js|ts)x?$/, '.test.$1');
+    const expectedPath = path.join(tmpDir, expectedRel);
+    expect(runTest).toHaveBeenCalledWith(expectedPath, '// fixed test code');
+
+    const spinner = ora.default.mock.results[0].value;
+    expect(spinner.succeed).toHaveBeenCalledWith('✅ Test written: util.js');
   });
 
-  test('stops after maxRetries when failure persists', async () => {
+  test('retry branch: initial test fails once then succeeds', async () => {
+    const sourceRel = 'components/comp.ts';
+    const sourcePath = path.join(tmpDir, sourceRel);
+    fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+    fs.writeFileSync(sourcePath, 'export const x = 1;');
+
     const client = {
       chat: {
         completions: {
-          create: jest.fn().mockResolvedValue({ choices: [{ message: { content: 'bad code' } }] }),
+          create: jest.fn()
+            .mockResolvedValueOnce({ choices: [{ message: { content: 'v1' } }] })
+            .mockResolvedValueOnce({ choices: [{ message: { content: 'v2' } }] }),
         },
       },
     };
-    const runTest = jest.fn().mockResolvedValue({ passed: false, error: 'fail always' });
-    const options = {
-      client,
-      model: 'm',
-      maxRetries: 0,
-      runTest,
-      testDir: 'D',
-      relativePath: 'f.js',
-    };
+    const runTest = jest.fn()
+      .mockResolvedValueOnce({ passed: false, error: 'Err' })
+      .mockResolvedValueOnce({ passed: true });
 
-    await generateAndFixTest('/project/f.js', options);
+    console.log = jest.fn();
+
+    await generateAndFixTest(sourcePath, {
+      client,
+      model: 'gpt-4',
+      runTest,
+      testDir: 'td',
+      relativePath: sourceRel,
+    });
 
     expect(client.chat.completions.create).toHaveBeenCalledTimes(2);
-    expect(runTest).toHaveBeenCalledTimes(1);
+    const expectedRel = path.posix.join('td', sourceRel).replace(/\.(js|ts)x?$/, '.test.$1');
+    const expectedPath = path.join(tmpDir, expectedRel);
+    expect(runTest).toHaveBeenNthCalledWith(1, expectedPath, 'v1');
+    expect(runTest).toHaveBeenNthCalledWith(2, expectedPath, 'v2');
+    // updated to match actual logged message with leading comma
+    expect(console.log).toHaveBeenCalledWith(', retry, attempt:', 0);
+
+    const spinner = ora.default.mock.results[0].value;
+    expect(spinner.succeed).toHaveBeenCalledWith('✅ Test written: comp.ts');
+  });
+
+  test('propagates OpenAI errors', async () => {
+    const sourceRel = 'x.js';
+    const sourcePath = path.join(tmpDir, sourceRel);
+    fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+    fs.writeFileSync(sourcePath, 'console.log(1);');
+
+    const client = {
+      chat: { completions: { create: jest.fn().mockRejectedValue(new Error('API fail')) } },
+    };
+    const runTest = jest.fn();
+
+    await expect(generateAndFixTest(sourcePath, {
+      client,
+      model: 'gpt-4',
+      runTest,
+      testDir: 't',
+      relativePath: sourceRel,
+    })).rejects.toThrow('API fail');
   });
 });

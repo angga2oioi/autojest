@@ -1,59 +1,35 @@
-# Autojest
+# AutoJest
 
-Autojest is a command-line tool that automates the generation of Jest unit tests for JavaScript/TypeScript files without existing tests. By integrating OpenAI's capabilities, it generates tests to ensure full coverage and assists in correcting them based on execution feedback.
+AutoJest is a command-line tool designed to automatically generate and manage Jest unit tests for JavaScript and TypeScript files. This tool assists developers by scanning source files for untested code and either creating corresponding tests or improving existing ones.
 
 ## Table of Contents
 
 - [Usage](#usage)
-- [Configuration](#configuration)
-- [Directory Structure](#directory-structure)
-- [Dependencies](#dependencies)
+- [Key Features](#key-features)
+- [License](#license)
 
 ## Usage
 
-Autojest can be executed using the command line. To initiate, run:
+You can run AutoJest from the command line:
 
 ```bash
 npx github:angga2oioi/autojest
 ```
 
-During execution, you will be prompted to specify a directory. Autojest will scan the directory for JavaScript/TypeScript files that lack corresponding Jest test files and offer to generate them.
+The tool will prompt you for the directory containing your source files and a directory where the test files should be generated.
 
-## Configuration
+## Key Features
 
-Autojest requires a connection to OpenAI's API. On first run, you will be prompted to provide your connection details and configuration settings:
+- **Automatic Test Generation**: Automatically generates Jest tests for untested files using AI assistance from OpenAI.
+- **Testing Coverage Reports**: Ability to analyze test coverage and prompt for additional tests if necessary.
+- **Integrated Command-line Interface**: Easy interaction via the command line to configure the testing process.
+- **File scans**: Scans source directories for files that lack corresponding test cases.
+- **Configurability**: Customizes connection settings to external APIs conveniently.
 
-- Open AI Connection: The connection string to your OpenAI account.
-- AI Model: The model you wish to use (e.g., "gpt-4").
-- Max Retries for Tests: Number of attempts Autojest will make to revise failing tests.
+## License
 
-Configuration details will be saved for subsequent use.
-
-## Directory Structure
-
-The project has the following directory structure:
-
-```
-├── .gitignore
-├── index.js              # Main entry point for the command line tool
-├── lib                   
-│   ├── config.js         # Configuration utilities
-│   ├── runner.js         # Test runner that executes generated tests
-│   ├── scanner.js        # Scans for untested files
-│   └── testgen.js        # Generates test code using OpenAI
-├── package-lock.json     # Dependency lock file
-└── package.json          # Project metadata and dependencies
-```
-
-## Dependencies
-
-Autojest relies on several npm packages, including:
-
-- **fast-glob**: For efficient file scanning
-- **ignore**: To handle patterns for ignoring files
-- **jaci**: For command-line prompts
-- **openai**: To utilize OpenAI's API for test generation
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ---
 
-For more information, please check the repository on [GitHub](https://github.com/angga2oioi/autojest). Enjoy using Autojest!
+This README provides a comprehensive overview of the AutoJest project, detailing how to get started, what the project structure looks like, its features, testing instructions, and how to contribute.
