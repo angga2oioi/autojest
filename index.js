@@ -1,40 +1,29 @@
 #!/usr/bin/env node
 //@ts-check
 
-const jaci = require("jaci");
-const { getConfig } = require("./lib/config");
-const { getUntestedFiles } = require("./lib/scanner");
-const { generateAndFixTest } = require("./lib/testgen");
-const { runTest } = require("./lib/runner");
-const OpenAI = require("openai");
-const path = require("path")
+const { getConfig, getDirectoryToTest, getOutputDirectory } = require("./lib/config");
+const { getUntestedFiles,  getAllSourceFiles } = require("./lib/scanner");
+const { createTestFile, rerunAllTest, runCoverage } = require("./lib/runner");
 
 const start = async () => {
 
     try {
-        const directory = await jaci.string("directory : ", { required: true });
+
+        const directory = await getDirectoryToTest()
+        const testDir = await getOutputDirectory()
+
         const { connection, model, maxRetries } = await getConfig();
 
-        const list = await getUntestedFiles(directory);
+        const untestedFiles = await getUntestedFiles(directory);
+        await createTestFile(connection, untestedFiles, directory, model, maxRetries, testDir)
 
-        if (list.length > 0) {
-            const client = new OpenAI(connection);
+        const sourceFiles = await getAllSourceFiles(directory)
+        await rerunAllTest(sourceFiles, directory, testDir, connection, model, maxRetries)
 
-            for (const relativePath of list) {
-                const fullPath = path.join(directory, relativePath);
-
-                await generateAndFixTest(fullPath, {
-                    client,
-                    model,
-                    maxRetries,
-                    runTest,
-                });
-            }
-
-            console.info("✅ Done.");
-        }
+        // await runCoverage(directory, testDir, sourceFiles, connection, model, maxRetries)
 
         console.info("🎉 All files already have tests.");
+
         process.exit(0);
     } catch (e) {
         console.error(e)
