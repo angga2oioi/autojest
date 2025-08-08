@@ -1,94 +1,76 @@
-jest.mock("fast-glob");
-const fg = require("fast-glob");
-const path = require("path");
-const { getUntestedFiles, getAllSourceFiles } = require("../../lib/scanner");
+jest.mock('fast-glob');
+const fg = require('fast-glob');
+const { getUntestedFiles, getAllSourceFiles } = require('../../lib/scanner');
 
-beforeEach(() => {
-  jest.clearAllMocks();
+describe('getUntestedFiles', () => {
+  beforeEach(() => {
+    fg.mockReset();
+  });
+
+  it('returns only untested files', async () => {
+    fg
+      // first call: source files
+      .mockResolvedValueOnce(['foo.js', 'bar.ts', 'nested/qux.tsx'])
+      // second call: test files
+      .mockResolvedValueOnce(['foo.test.js', 'nested/qux.test.tsx']);
+    const result = await getUntestedFiles('src');
+    expect(result).toEqual(['src/bar.ts']);
+  });
+
+  it('handles backslashes in test paths and windows separators', async () => {
+    fg
+      // source in nested folder
+      .mockResolvedValueOnce(['nested/comp.jsx'])
+      // windows-style test path
+      .mockResolvedValueOnce(['nested\\comp.test.jsx']);
+    const result = await getUntestedFiles('src');
+    expect(result).toEqual([]); // comp.jsx has a matching test
+  });
+
+  it('matches files inside src directory by stripping src segment', async () => {
+    fg
+      // source under src folder
+      .mockResolvedValueOnce(['src/sub/alpha.ts'])
+      // test path without src prefix
+      .mockResolvedValueOnce(['sub/alpha.test.ts']);
+    const result = await getUntestedFiles('project');
+    expect(result).toEqual([]); // should match and exclude
+  });
+
+  it('handles no test files', async () => {
+    fg
+      .mockResolvedValueOnce(['a.js', 'b.ts'])
+      .mockResolvedValueOnce([]);
+    const result = await getUntestedFiles('lib');
+    expect(result).toEqual(['lib/a.js', 'lib/b.ts']);
+  });
+
+  it('propagates error from fg for sources', async () => {
+    fg.mockRejectedValueOnce(new Error('fg source error'));
+    await expect(getUntestedFiles('x')).rejects.toThrow('fg source error');
+  });
+
+  it('propagates error from fg for tests', async () => {
+    fg
+      .mockResolvedValueOnce(['a.js'])
+      .mockRejectedValueOnce(new Error('fg test error'));
+    await expect(getUntestedFiles('y')).rejects.toThrow('fg test error');
+  });
 });
 
-describe("getAllSourceFiles", () => {
-  it("returns all source files from fast-glob", async () => {
-    const cwd = "any-dir";
-    const mockSources = ["a.js", "subdir/b.tsx", "c.jsx"];
-    fg.mockResolvedValueOnce(mockSources);
-    const result = await getAllSourceFiles(cwd);
-    expect(fg).toHaveBeenCalledWith(["**/*.{js,ts,jsx,tsx}"], {
-      cwd,
-      ignore: ["**/*.test.*", "**/__tests__/**", "node_modules/**", "coverage/**", "dist/**", "build/**"],
-    });
-    const expected = mockSources.map(p => path.posix.join(cwd, p));
-    expect(result).toEqual(expected);
+describe('getAllSourceFiles', () => {
+  beforeEach(() => {
+    fg.mockReset();
   });
 
-  it("propagates errors from fast-glob", async () => {
-    const error = new Error("fg fail");
-    fg.mockRejectedValueOnce(error);
-    await expect(getAllSourceFiles("dir")).rejects.toBe(error);
-  });
-});
-
-describe("getUntestedFiles", () => {
-  it("filters out files that have matching .test files", async () => {
-    const cwd = "root";
-    const sources = [
-      "folder/a.jsx",
-      "folder/subdir/b.js",
-      "src/c.tsx",
-      "foo.js",
-      "nested/deep/d.ts",
-    ];
-    const tests = [
-      "folder/a.test.jsx",
-      "folder/subdir/b.test.js",
-      "c.test.tsx",
-      "nested/deep/d.test.ts",
-    ];
-    fg
-      .mockResolvedValueOnce(sources)
-      .mockResolvedValueOnce(tests);
-    const result = await getUntestedFiles(cwd);
-    expect(fg).toHaveBeenNthCalledWith(1, ["**/*.{js,ts,jsx,tsx}"], expect.any(Object));
-    expect(fg).toHaveBeenNthCalledWith(2, ["**/*.test.{js,ts,jsx,tsx}", "**/*.spec.{js,ts,jsx,tsx}"], expect.any(Object));
-    const expected = ["foo.js"].map(p => path.posix.join(cwd, p));
-    expect(result).toEqual(expected);
+  it('returns mapped source file paths', async () => {
+    fg.mockResolvedValueOnce(['one.js', 'deep/two.tsx']);
+    const result = await getAllSourceFiles('app');
+    expect(result).toEqual(['app/one.js', 'app/deep/two.tsx']);
   });
 
-  it("handles Windows-style backslashes in source and test paths", async () => {
-    const cwd = "win";
-    const sources = ["dir\\cool.js", "other/file.ts"];
-    const tests = ["dir/cool.test.js"];
-    fg
-      .mockResolvedValueOnce(sources)
-      .mockResolvedValueOnce(tests);
-    const result = await getUntestedFiles(cwd);
-    const expected = ["other/file.ts"].map(p => path.posix.join(cwd, p));
-    expect(result).toEqual(expected);
-  });
-
-  it("returns all sources if no tests are found", async () => {
-    const cwd = "dir";
-    const sources = ["one.js", "two.ts"];
-    fg
-      .mockResolvedValueOnce(sources)
-      .mockResolvedValueOnce([]); // no tests
-    const result = await getUntestedFiles(cwd);
-    const expected = sources.map(p => path.posix.join(cwd, p));
-    expect(result).toEqual(expected);
-  });
-
-  it("propagates errors from fast-glob on source scan", async () => {
-    const error = new Error("scan error");
-    fg.mockRejectedValueOnce(error);
-    await expect(getUntestedFiles("dir")).rejects.toBe(error);
-  });
-
-  it("propagates errors from fast-glob on test scan", async () => {
-    const sources = ["a.js"];
-    const error = new Error("test scan error");
-    fg
-      .mockResolvedValueOnce(sources)
-      .mockRejectedValueOnce(error);
-    await expect(getUntestedFiles("dir")).rejects.toBe(error);
+  it('propagates error from fg', async () => {
+    fg.mockRejectedValueOnce(new Error('fg error'));
+    await expect(getAllSourceFiles('dir')).rejects.toThrow('fg error');
   });
 });

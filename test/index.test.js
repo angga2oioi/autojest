@@ -1,119 +1,113 @@
-const originalExit = process.exit;
+const path = require('path');
 
-describe('index.js CLI', () => {
-  afterAll(() => {
-    process.exit = originalExit;
+beforeEach(() => {
+  jest.resetModules(); // clear module registry
+  jest.clearAllMocks();  // clear mock calls
+});
+
+afterEach(() => {
+  jest.restoreAllMocks(); // restore spy implementations
+});
+
+test('success flow: calls all functions and exits with code 0', async () => {
+  // Mock config module
+  const getConfig = jest.fn().mockResolvedValue();
+  const getDirectoryToTest = jest.fn().mockResolvedValue('/src');
+  const getOutputDirectory = jest.fn().mockResolvedValue('/tests');
+  jest.doMock(path.resolve(__dirname, '../lib/config'), () => ({
+    getConfig,
+    getDirectoryToTest,
+    getOutputDirectory,
+  }));
+  // Mock scanner module
+  const getUntestedFiles = jest.fn().mockResolvedValue(['file1.js', 'file2.js']);
+  const getAllSourceFiles = jest.fn().mockResolvedValue(['file1.js', 'file2.js', 'file3.js']);
+  jest.doMock(path.resolve(__dirname, '../lib/scanner'), () => ({
+    getUntestedFiles,
+    getAllSourceFiles,
+  }));
+  // Mock runner module
+  const createTestFile = jest.fn().mockResolvedValue();
+  const rerunAllTest = jest.fn().mockResolvedValue();
+  const runCoverage = jest.fn().mockResolvedValue();
+  jest.doMock(path.resolve(__dirname, '../lib/runner'), () => ({
+    createTestFile,
+    rerunAllTest,
+    runCoverage,
+  }));
+  // Spy on console and exit
+  const consoleInfo = jest.spyOn(console, 'info').mockImplementation(() => {});
+  const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+  const exitMock = jest.spyOn(process, 'exit').mockImplementation(() => {});
+
+  // Load module
+  jest.isolateModules(async () => {
+    require(path.resolve(__dirname, '../index.js'));
   });
 
-  afterEach(() => {
-    jest.resetAllMocks();
-    jest.resetModules();
+  // Wait for async start() to complete
+  await new Promise(resolve => setImmediate(resolve));
+
+  expect(getConfig).toHaveBeenCalledTimes(1);
+  expect(getDirectoryToTest).toHaveBeenCalledTimes(1);
+  expect(getOutputDirectory).toHaveBeenCalledTimes(1);
+
+  expect(getUntestedFiles).toHaveBeenCalledWith('/src');
+  expect(getAllSourceFiles).toHaveBeenCalledWith('/src');
+
+  expect(createTestFile).toHaveBeenCalledWith(['file1.js', 'file2.js'], '/tests');
+  expect(rerunAllTest).toHaveBeenCalledWith(['file1.js', 'file2.js', 'file3.js'], '/tests');
+  expect(runCoverage).toHaveBeenCalledWith('/src', '/tests', ['file1.js', 'file2.js', 'file3.js']);
+
+  expect(consoleInfo).toHaveBeenCalledWith('🎉 All files already have tests.');
+  expect(consoleError).not.toHaveBeenCalled();
+  expect(exitMock).toHaveBeenCalledWith(0);
+});
+
+test('failure flow: getConfig rejects and logs error without exiting', async () => {
+  const error = new Error('config error');
+  const getConfig = jest.fn().mockRejectedValue(error);
+  const getDirectoryToTest = jest.fn();
+  const getOutputDirectory = jest.fn();
+  jest.doMock(path.resolve(__dirname, '../lib/config'), () => ({
+    getConfig,
+    getDirectoryToTest,
+    getOutputDirectory,
+  }));
+  // scanner and runner mocks
+  const getUntestedFiles = jest.fn().mockResolvedValue([]);
+  const getAllSourceFiles = jest.fn().mockResolvedValue([]);
+  jest.doMock(path.resolve(__dirname, '../lib/scanner'), () => ({
+    getUntestedFiles,
+    getAllSourceFiles,
+  }));
+  const createTestFile = jest.fn().mockResolvedValue();
+  const rerunAllTest = jest.fn().mockResolvedValue();
+  const runCoverage = jest.fn().mockResolvedValue();
+  jest.doMock(path.resolve(__dirname, '../lib/runner'), () => ({
+    createTestFile,
+    rerunAllTest,
+    runCoverage,
+  }));
+  // Spy on console and exit
+  const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+  const exitMock = jest.spyOn(process, 'exit').mockImplementation(() => {});
+
+  jest.isolateModules(() => {
+    require(path.resolve(__dirname, '../index.js'));
   });
 
-  it('completes successfully and exits with code 0', async () => {
-    const mockGetDirectoryToTest = jest.fn(() => Promise.resolve('test-dir'));
-    const mockGetOutputDirectory = jest.fn(() => Promise.resolve('out-dir'));
-    const mockGetConfig = jest.fn(() => Promise.resolve({ connection: 'conn', model: 'mod' }));
-    jest.doMock('../lib/config', () => ({
-      getDirectoryToTest: mockGetDirectoryToTest,
-      getOutputDirectory: mockGetOutputDirectory,
-      getConfig: mockGetConfig
-    }));
+  await new Promise(resolve => setImmediate(resolve));
 
-    const mockGetUntestedFiles = jest.fn(() => Promise.resolve(['file1.js', 'file2.js']));
-    const mockGetAllSourceFiles = jest.fn(() => Promise.resolve(['src1.js', 'src2.js']));
-    jest.doMock('../lib/scanner', () => ({
-      getUntestedFiles: mockGetUntestedFiles,
-      getAllSourceFiles: mockGetAllSourceFiles
-    }));
+  expect(getConfig).toHaveBeenCalledTimes(1);
+  expect(getDirectoryToTest).not.toHaveBeenCalled();
+  expect(getOutputDirectory).not.toHaveBeenCalled();
 
-    const mockCreateTestFile = jest.fn(() => Promise.resolve());
-    const mockRerunAllTest = jest.fn(() => Promise.resolve());
-    const mockRunCoverage = jest.fn(() => Promise.resolve());
-    jest.doMock('../lib/runner', () => ({
-      createTestFile: mockCreateTestFile,
-      rerunAllTest: mockRerunAllTest,
-      runCoverage: mockRunCoverage
-    }));
+  expect(getUntestedFiles).not.toHaveBeenCalled();
+  expect(createTestFile).not.toHaveBeenCalled();
+  expect(rerunAllTest).not.toHaveBeenCalled();
+  expect(runCoverage).not.toHaveBeenCalled();
 
-    const infoSpy = jest.spyOn(console, 'info').mockImplementation(() => {});
-    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    const exitSpy = jest.fn();
-    process.exit = exitSpy;
-
-    require('../index');
-
-    await new Promise(resolve => {
-      const check = () => {
-        if (exitSpy.mock.calls.length) return resolve();
-        setImmediate(check);
-      };
-      check();
-    });
-
-    expect(mockGetDirectoryToTest).toHaveBeenCalledTimes(1);
-    expect(mockGetOutputDirectory).toHaveBeenCalledTimes(1);
-    expect(mockGetConfig).toHaveBeenCalledTimes(1);
-    expect(mockGetUntestedFiles).toHaveBeenCalledWith('test-dir');
-    expect(mockCreateTestFile).toHaveBeenCalledWith('conn', ['file1.js', 'file2.js'], 'mod', 'out-dir');
-    expect(mockGetAllSourceFiles).toHaveBeenCalledWith('test-dir');
-    expect(mockRerunAllTest).toHaveBeenCalledWith(['src1.js', 'src2.js'], 'out-dir', 'conn', 'mod');
-    expect(mockRunCoverage).toHaveBeenCalledWith('test-dir', 'out-dir', ['src1.js', 'src2.js'], 'conn', 'mod');
-    expect(infoSpy).toHaveBeenCalledWith("🎉 All files already have tests.");
-    expect(errorSpy).not.toHaveBeenCalled();
-    expect(exitSpy).toHaveBeenCalledWith(0);
-  });
-
-  it('handles errors and logs them without exiting', async () => {
-    const mockGetDirectoryToTest = jest.fn(() => Promise.resolve('test-dir'));
-    const mockGetOutputDirectory = jest.fn(() => Promise.resolve('out-dir'));
-    const mockGetConfig = jest.fn(() => Promise.resolve({ connection: 'conn', model: 'mod' }));
-    jest.doMock('../lib/config', () => ({
-      getDirectoryToTest: mockGetDirectoryToTest,
-      getOutputDirectory: mockGetOutputDirectory,
-      getConfig: mockGetConfig
-    }));
-
-    const testError = new Error('scan failed');
-    const mockGetUntestedFiles = jest.fn(() => Promise.reject(testError));
-    const mockGetAllSourceFiles = jest.fn();
-    jest.doMock('../lib/scanner', () => ({
-      getUntestedFiles: mockGetUntestedFiles,
-      getAllSourceFiles: mockGetAllSourceFiles
-    }));
-
-    const mockCreateTestFile = jest.fn();
-    const mockRerunAllTest = jest.fn();
-    const mockRunCoverage = jest.fn();
-    jest.doMock('../lib/runner', () => ({
-      createTestFile: mockCreateTestFile,
-      rerunAllTest: mockRerunAllTest,
-      runCoverage: mockRunCoverage
-    }));
-
-    const infoSpy = jest.spyOn(console, 'info').mockImplementation(() => {});
-    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    const exitSpy = jest.fn();
-    process.exit = exitSpy;
-
-    require('../index');
-
-    await new Promise(resolve => {
-      const check = () => {
-        if (errorSpy.mock.calls.length) return resolve();
-        setImmediate(check);
-      };
-      check();
-    });
-
-    expect(mockGetDirectoryToTest).toHaveBeenCalledTimes(1);
-    expect(mockGetUntestedFiles).toHaveBeenCalledWith('test-dir');
-    expect(mockCreateTestFile).not.toHaveBeenCalled();
-    expect(mockGetAllSourceFiles).not.toHaveBeenCalled();
-    expect(mockRerunAllTest).not.toHaveBeenCalled();
-    expect(mockRunCoverage).not.toHaveBeenCalled();
-    expect(infoSpy).not.toHaveBeenCalled();
-    expect(errorSpy.mock.calls[0][0]).toBe(testError);
-    expect(exitSpy).not.toHaveBeenCalled();
-  });
+  expect(consoleError).toHaveBeenCalledWith(error);
+  expect(exitMock).not.toHaveBeenCalled();
 });

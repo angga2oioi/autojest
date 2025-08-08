@@ -9,19 +9,18 @@ const start = async () => {
 
     try {
 
+        await getConfig();
         const directory = await getDirectoryToTest()
         const testDir = await getOutputDirectory()
 
-        const { connection, model } = await getConfig();
-
         const untestedFiles = await getUntestedFiles(directory);
         
-        await createTestFile(connection, untestedFiles, model, testDir)
+        await createTestFile(untestedFiles,testDir)
         
         const sourceFiles = await getAllSourceFiles(directory)
-        await rerunAllTest(sourceFiles,  testDir, connection, model)
+        await rerunAllTest(sourceFiles,  testDir)
 
-        await runCoverage(directory, testDir, sourceFiles, connection, model)
+        await runCoverage(directory, testDir, sourceFiles)
 
         console.info("🎉 All files already have tests.");
 

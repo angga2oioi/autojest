@@ -1,153 +1,183 @@
-jest.mock("fs");
-jest.mock("child_process");
-jest.mock("openai");
-jest.mock("jaci");
-jest.mock("ora", () => ({ default: jest.fn() }));
-jest.mock("../../lib/testgen", () => ({ generateAndFixTest: jest.fn() }));
+jest.mock('fs', () => ({
+  writeFileSync: jest.fn(),
+  existsSync: jest.fn(),
+  readFileSync: jest.fn(),
+}));
+jest.mock('child_process', () => ({
+  execSync: jest.fn(),
+}));
+jest.mock('../../lib/testgen', () => ({
+  generateAndFixTest: jest.fn(),
+}));
+jest.mock('jaci', () => ({
+  confirm: jest.fn(),
+}));
 
-const fs = require("fs");
-const path = require("path");
-const childProcess = require("child_process");
-const OpenAI = require("openai");
-const jaci = require("jaci");
-const { generateAndFixTest } = require("../../lib/testgen");
-const runner = require("../../lib/runner");
+const fs = require('fs');
+const { execSync } = require('child_process');
+const { generateAndFixTest } = require('../../lib/testgen');
+const jaci = require('jaci');
+const path = require('path');
+const runner = require('../../lib/runner');
 
-describe("runTest", () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-  });
+beforeAll(() => {
+  jest.spyOn(process, 'cwd').mockReturnValue('/project');
+  jest.spyOn(console, 'info').mockImplementation(() => {});
+  jest.spyOn(console, 'log').mockImplementation(() => {});
+  jest.spyOn(console, 'error').mockImplementation(() => {});
+});
 
-  it("writes test code and returns passed true", async () => {
-    fs.writeFileSync.mockImplementation(() => {});
-    childProcess.execSync.mockImplementation(() => {});
-    const res = await runner.runTest("file.test.js", "code");
-    expect(fs.writeFileSync).toHaveBeenCalledWith("file.test.js", "code");
-    expect(childProcess.execSync).toHaveBeenCalledWith(
-      "npx jest file.test.js --runInBand --verbose",
-      { stdio: "pipe", encoding: "utf8" }
+beforeEach(() => {
+  jest.clearAllMocks();
+  execSync.mockImplementation(() => {});
+});
+
+describe('runTest', () => {
+  test('writes file and returns passed true when execSync succeeds', async () => {
+    const res = await runner.runTest('file.js', 'code');
+    expect(fs.writeFileSync).toHaveBeenCalledWith('file.js', 'code');
+    expect(execSync).toHaveBeenCalledWith(
+      'npx jest file.js --runInBand --verbose',
+      { stdio: 'pipe', encoding: 'utf8' }
     );
     expect(res).toEqual({ passed: true, error: null });
   });
-
-  it("returns error.stdout when execSync throws with stdout", async () => {
-    const err = new Error("fail");
-    err.stdout = "jest error";
-    childProcess.execSync.mockImplementation(() => { throw err; });
-    const res = await runner.runTest("f.js", "");
-    expect(res).toEqual({ passed: false, error: "jest error" });
+  test('does not write file when no testCode', async () => {
+    const res = await runner.runTest('file2.js', '');
+    expect(fs.writeFileSync).not.toHaveBeenCalled();
+    expect(execSync).toHaveBeenCalled();
+    expect(res).toEqual({ passed: true, error: null });
   });
-
-  it("returns error.message when execSync throws without stdout", async () => {
-    const err = new Error("oops");
-    childProcess.execSync.mockImplementation(() => { throw err; });
-    const res = await runner.runTest("f.js", "");
-    expect(res).toEqual({ passed: false, error: "oops" });
+  test('returns false and stdout when execSync throws with stdout', async () => {
+    const e = new Error('e'); e.stdout = 'out';
+    execSync.mockImplementation(() => { throw e; });
+    const res = await runner.runTest('f.js', '');
+    expect(res).toEqual({ passed: false, error: 'out' });
   });
-});
-
-describe("createTestFile", () => {
-  const connection = { apiKey: "key" }, model = "m", directory = "/proj/src", testDir = "/proj/tests";
-  beforeEach(() => {
-    jest.clearAllMocks();
-    OpenAI.mockImplementation(function(conn){ this.conn = conn; });
-  });
-
-  it("skips when no untestedFiles", async () => {
-    await runner.createTestFile(connection, [], directory, model, testDir);
-    expect(generateAndFixTest).not.toHaveBeenCalled();
-  });
-
-  it("generates tests for each untested file", async () => {
-    jest.spyOn(console, "info").mockImplementation(() => {});
-    process.cwd = jest.fn().mockReturnValue("/proj");
-    generateAndFixTest.mockResolvedValue();
-    const files = ["a.js", "sub/b.js"];
-    await runner.createTestFile(connection, files, directory, model, testDir);
-    expect(generateAndFixTest).toHaveBeenCalledTimes(2);
-    const calls = generateAndFixTest.mock.calls;
-    expect(calls[0][0]).toBe(path.join(process.cwd(), "a.js"));
-    expect(calls[0][1].relativePath).toMatch(/a\.js$/);
-    expect(calls[1][0]).toBe(path.join(process.cwd(), "sub/b.js"));
-    expect(calls[1][1].relativePath).toMatch(/sub\/b\.js$/);
-    expect(console.info).toHaveBeenCalledWith("✅ Tests generated.");
+  test('returns false and message when execSync throws without stdout', async () => {
+    const e = new Error('msg');
+    execSync.mockImplementation(() => { throw e; });
+    const res = await runner.runTest('f2.js', '');
+    expect(res).toEqual({ passed: false, error: 'msg' });
   });
 });
 
-describe("rerunAllTest", () => {
-  const connection = {}, model = "M", directory = "/proj/src", testDir = "tests";
-  beforeEach(() => {
-    jest.clearAllMocks();
-    OpenAI.mockImplementation(function(conn){ this.conn = conn; });
-    process.cwd = jest.fn().mockReturnValue("/proj");
-    fs.readFileSync.mockReturnValue("existingCode");
-    jest.spyOn(console, "info").mockImplementation(() => {});
-    jest.spyOn(console, "log").mockImplementation(() => {});
-  });
-
-  it("does not fix when tests pass", async () => {
-    childProcess.execSync.mockImplementation(() => {});
-    await runner.rerunAllTest(["file.js"], directory, testDir, connection, model);
+describe('createTestFile', () => {
+  test('no action on empty list', async () => {
+    await runner.createTestFile([], 'tdir');
     expect(generateAndFixTest).not.toHaveBeenCalled();
+    expect(console.info).not.toHaveBeenCalled();
   });
-
-  it("fixes when tests fail", async () => {
-    const err = new Error("err");
-    err.stdout = "stdout";
-    childProcess.execSync.mockImplementation(() => { throw err; });
-    generateAndFixTest.mockResolvedValue();
-    await runner.rerunAllTest(["file.js"], directory, testDir, connection, model);
-    const [filePath, opts] = generateAndFixTest.mock.calls[0];
-    expect(filePath).toBe(path.join(process.cwd(), "file.js"));
-    expect(opts).toMatchObject({
-      existingTestCode: "existingCode",
-      existingError: "stdout",
-      runTest: runner.runTest
+  test('generates for each untested file', async () => {
+    await runner.createTestFile(['src/a.js'], 'tdir');
+    const expectedPath = path.join('/project', 'src/a.js');
+    expect(generateAndFixTest).toHaveBeenCalledWith(expectedPath, {
+      runTest: runner.runTest,
+      testDir: 'tdir',
+      relativePath: 'src/a.js',
     });
-    expect(opts.relativePath).toMatch(/file\.js$/);
-    expect(opts).toHaveProperty("model");
-    expect(opts).toHaveProperty("testDir");
+    expect(console.info).toHaveBeenCalledWith('✅ Tests generated.');
   });
 });
 
-describe("runCoverage", () => {
-  const connection = {}, model = "M", directory = "src", testDir = "tests", sources = ["a.js", "b.js"];
+describe('rerunAllTest', () => {
+  test('skips passing tests', async () => {
+    fs.readFileSync.mockReturnValue('c');
+    execSync.mockImplementation(() => {});
+    await runner.rerunAllTest(['f.js'], 't');
+    expect(generateAndFixTest).not.toHaveBeenCalled();
+  });
+  test('fixes failing tests', async () => {
+    fs.readFileSync.mockReturnValue('code');
+    execSync.mockImplementation(() => { throw new Error('e'); });
+    await runner.rerunAllTest(['f.js'], 't');
+    expect(generateAndFixTest).toHaveBeenCalled();
+    const [p, opts] = generateAndFixTest.mock.calls[0];
+    expect(p).toMatch(/t[\\/\/]f\.js$/);
+    expect(opts).toMatchObject({
+      runTest: runner.runTest,
+      testDir: 't',
+      existingTestCode: 'code',
+      existingError: 'e',
+    });
+  });
+});
+
+describe('runCoverage', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
-    OpenAI.mockImplementation(function(conn){ this.conn = conn; });
-    process.cwd = jest.fn().mockReturnValue("/repo");
-    childProcess.execSync.mockImplementation(() => {});
-    jest.spyOn(console, "info").mockImplementation(() => {});
-    jest.spyOn(console, "error").mockImplementation(() => {});
+    fs.existsSync.mockReset();
+    fs.readFileSync.mockReset();
+    jaci.confirm.mockReset();
   });
 
-  it("updates undercovered files when confirm true via final report", async () => {
-    fs.existsSync.mockImplementation(p => p.endsWith("coverage-summary.json") === false && p.endsWith("coverage-final.json"));
+  test('summaryFile branch with update', async () => {
+    const keyA = path.join('test', 'a.js');
+    const keyB = path.join('test', 'b.js');
+    fs.existsSync.mockImplementation(p => p.endsWith('coverage-summary.json'));
+    fs.readFileSync.mockReturnValue(JSON.stringify({
+      [keyA]: { statements: { pct: 50 } },
+      [keyB]: { statements: { pct: 90 } },
+    }));
+    jaci.confirm.mockResolvedValue(true);
+    await runner.runCoverage('test', 'tdir', ['a.js', 'b.js']);
+    expect(generateAndFixTest).toHaveBeenCalledTimes(1);
+    const [filePath, opts] = generateAndFixTest.mock.calls[0];
+    expect(filePath).toMatch(new RegExp(`${keyA.replace(/\\/g, '\\\\')}$`));
+    expect(opts.runTest).toBe(runner.runTest);
+    expect(opts.testDir).toBe('tdir');
+    expect(opts.relativePath).toMatch(/a\.js$/);
+    expect(console.info).toHaveBeenCalledWith('✅ Tests updated for under-covered files.');
+  });
+
+  test('summaryFile branch no update', async () => {
+    const key = path.join('test', 'a.js');
+    fs.existsSync.mockImplementation(p => p.endsWith('coverage-summary.json'));
+    fs.readFileSync.mockReturnValue(JSON.stringify({
+      [key]: { statements: { pct: 90 } },
+    }));
+    jaci.confirm.mockResolvedValue(false);
+    await runner.runCoverage('test', 'tdir', ['a.js']);
+    expect(generateAndFixTest).not.toHaveBeenCalled();
+    expect(console.info).toHaveBeenCalledWith(
+      '✅ All source files have at least 80% coverage.'
+    );
+  });
+
+  test('finalFile branch', async () => {
+    fs.existsSync.mockImplementation(p =>
+      p.endsWith('coverage-summary.json') ? false : p.endsWith('coverage-final.json')
+    );
     const raw = {
-      one: { path: "/repo/src/a.js", s: { "1": 0, "2": 1 } },
-      two: { path: "/repo/src/b.js", s: { "1": 1 } }
+      x: { path: path.join('/project', 'test', 'x.js'), s: { '1': 1, '2': 0 } },
+      y: { path: path.join('/project', 'test', 'y.js'), s: {} },
     };
     fs.readFileSync.mockReturnValue(JSON.stringify(raw));
     jaci.confirm.mockResolvedValue(true);
-    generateAndFixTest.mockResolvedValue();
-    await runner.runCoverage(directory, testDir, sources, connection, model);
-    expect(jaci.confirm).toHaveBeenCalled();
+    await runner.runCoverage('test', 'tdir', ['x.js', 'y.js']);
     expect(generateAndFixTest).toHaveBeenCalledTimes(1);
-    const [calledPath, calledOpts] = generateAndFixTest.mock.calls[0];
-    expect(calledPath).toBe(path.join(directory, "a.js"));
-    expect(calledOpts).toMatchObject({
-      model,
-      runTest: runner.runTest,
-      testDir
-    });
-    expect(calledOpts.relativePath).toMatch(/a\.js$/);
-    expect(console.info).toHaveBeenCalledWith("✅ Tests updated for under-covered files.");
+    const [filePath, opts] = generateAndFixTest.mock.calls[0];
+    expect(filePath).toMatch(/test[\\/\/]x\.js$/);
+    expect(opts.runTest).toBe(runner.runTest);
+    expect(opts.testDir).toBe('tdir');
+    expect(opts.relativePath).toMatch(/x\.js$/);
+    expect(console.info).toHaveBeenCalledWith('✅ Tests updated for under-covered files.');
   });
 
-  it("logs no report and all covered when none exist", async () => {
+  test('no report', async () => {
     fs.existsSync.mockReturnValue(false);
-    await runner.runCoverage(directory, testDir, sources, connection, model);
-    expect(console.error).toHaveBeenCalledWith("❌ No coverage report found.");
-    expect(console.info).toHaveBeenCalledWith("✅ All source files have at least 80% coverage.");
+    await runner.runCoverage('test', 'tdir', ['a.js']);
+    expect(console.error).toHaveBeenCalledWith('❌ No coverage report found.');
+    expect(console.info).toHaveBeenCalledWith(
+      '✅ All source files have at least 80% coverage.'
+    );
+    expect(generateAndFixTest).not.toHaveBeenCalled();
+  });
+
+  test('execSync throws is caught', async () => {
+    execSync.mockImplementation(() => { throw new Error('je'); });
+    fs.existsSync.mockReturnValue(false);
+    await runner.runCoverage('test', 'tdir', ['a.js']);
+    expect(console.error).toHaveBeenCalledWith(new Error('je'));
+    expect(generateAndFixTest).not.toHaveBeenCalled();
   });
 });
